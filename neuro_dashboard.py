@@ -80,18 +80,15 @@ def load_model_weights_safely(model, path, name):
         try: model.load_weights(path, by_name=True, skip_mismatch=True); return True, "Flexible"
         except Exception as e: return False, str(e)
 
-# --- 5. UI CONFIGURATION ---
-st.set_page_config(page_title="NeuroFundus Command Center", page_icon="👁️", layout="wide")
+# --- 5. PATENT UI CONFIGURATION ---
+st.set_page_config(page_title="Alzheimer's Assessment System", page_icon="🧠", layout="wide")
 
-# --- 6. THE PARTICLE ENGINE (THE FIX) ---
-# We inject JavaScript to force a canvas onto the parent window, bypassing Streamlit's iframe sandbox.
+# --- 6. PARTICLE ENGINE (JS INJECTION) ---
 particle_js = """
 <script>
-    // 1. Clean up any existing canvas to prevent duplicates on rerun
     const existingCanvas = window.parent.document.getElementById('neural-canvas');
     if (existingCanvas) { existingCanvas.remove(); }
 
-    // 2. Create the Canvas
     const canvas = window.parent.document.createElement('canvas');
     canvas.id = 'neural-canvas';
     canvas.style.position = 'fixed';
@@ -99,11 +96,10 @@ particle_js = """
     canvas.style.left = '0';
     canvas.style.width = '100%';
     canvas.style.height = '100%';
-    canvas.style.zIndex = '-1'; // Behind everything
+    canvas.style.zIndex = '-1';
     canvas.style.background = 'radial-gradient(circle at center, #020617 0%, #000000 100%)';
     window.parent.document.body.appendChild(canvas);
 
-    // 3. Initialize Context
     const ctx = canvas.getContext('2d');
     let width, height;
 
@@ -114,9 +110,8 @@ particle_js = """
     window.parent.addEventListener('resize', resize);
     resize();
 
-    // 4. Particle System
     const particles = [];
-    const particleCount = 100; // Density
+    const particleCount = 100;
     const connectionDistance = 150;
 
     class Particle {
@@ -134,7 +129,7 @@ particle_js = """
             if (this.y < 0 || this.y > height) this.vy *= -1;
         }
         draw() {
-            ctx.fillStyle = '#00f2ff'; // Cyan Dots
+            ctx.fillStyle = '#00f2ff';
             ctx.beginPath();
             ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
             ctx.fill();
@@ -143,23 +138,18 @@ particle_js = """
 
     for (let i = 0; i < particleCount; i++) particles.push(new Particle());
 
-    // 5. Animation Loop
     function animate() {
         ctx.clearRect(0, 0, width, height);
-
-        // Draw Connections
-        ctx.strokeStyle = 'rgba(0, 242, 255, 0.15)'; // Faint Cyan Lines
+        ctx.strokeStyle = 'rgba(0, 242, 255, 0.15)';
         ctx.lineWidth = 0.5;
 
         for (let i = 0; i < particles.length; i++) {
             particles[i].update();
             particles[i].draw();
-
             for (let j = i; j < particles.length; j++) {
                 const dx = particles[i].x - particles[j].x;
                 const dy = particles[i].y - particles[j].y;
                 const dist = Math.sqrt(dx*dx + dy*dy);
-
                 if (dist < connectionDistance) {
                     ctx.beginPath();
                     ctx.moveTo(particles[i].x, particles[i].y);
@@ -178,33 +168,42 @@ components.html(particle_js, height=0, width=0)
 # --- 7. CSS STYLING ---
 st.markdown("""
 <style>
-    /* Make Streamlit Transparent so Canvas shows through */
     .stApp { background: transparent !important; }
     [data-testid="stAppViewContainer"] { background: transparent !important; }
     [data-testid="stHeader"] { background: rgba(0,0,0,0) !important; }
-    [data-testid="stToolbar"] { visibility: hidden; } /* Hide the hamburger menu */
+    [data-testid="stToolbar"] { visibility: hidden; }
 
-    /* Typography */
     * { font-family: 'Times New Roman', Times, serif !important; color: #e0f2fe; }
 
-    /* Glass Cards */
     .glass-metric {
-        background: rgba(15, 23, 42, 0.6);
+        background: rgba(15, 23, 42, 0.7);
         border: 1px solid rgba(56, 189, 248, 0.2);
         box-shadow: 0 4px 30px rgba(0, 0, 0, 0.3);
         backdrop-filter: blur(8px);
         border-radius: 12px;
         padding: 20px;
         text-align: center;
+        margin-bottom: 20px;
     }
 
-    /* Sidebar */
     section[data-testid="stSidebar"] {
         background-color: rgba(2, 6, 23, 0.9);
         border-right: 1px solid rgba(56, 189, 248, 0.1);
     }
 
     h1, h2, h3 { text-shadow: 0 0 15px rgba(56, 189, 248, 0.6); color: #ffffff !important; }
+
+    /* Patent Title Styling */
+    .patent-title {
+        font-size: 2.2rem;
+        font-weight: bold;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        background: linear-gradient(90deg, #fff, #a5f3fc);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        text-shadow: 0px 0px 20px rgba(0, 255, 255, 0.3);
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -249,25 +248,37 @@ def process_img(img_file):
 
 # --- 9. MAIN LOGIC ---
 with st.sidebar:
-    st.markdown("## ⚙️ SYSTEM PARAMETERS")
+    st.markdown("### 🔬 SYSTEM CONTROL PANEL")
     models, logs = init_inference_engine()
     for log in logs: st.markdown(f"<small>{log}</small>", unsafe_allow_html=True)
     st.divider()
     w_vit = st.slider("ViT Weight Factor", 0.0, 3.0, 1.2)
     w_cnn = st.slider("CNN Weight Factor", 0.0, 3.0, 0.8)
-    thresh = st.slider("Clinical Threshold", 0.0, 1.0, 0.5)
+    thresh = st.slider("Diagnostic Threshold", 0.0, 1.0, 0.5)
 
-c1, c2 = st.columns([3, 1])
-with c1: st.title("NeuroFundus Command Center")
-with c2: st.markdown("<div class='glass-metric'><h5>SYSTEM ACTIVE</h5>v12.5 Particle Core</div>", unsafe_allow_html=True)
+    st.markdown("---")
+    st.markdown("**Co-Inventor: Danish A. G.**")
+    st.markdown("[Visit Portfolio](https://www.xzashr.com)")
 
-upload = st.file_uploader("Upload DICOM/Fundus Scan", type=['png', 'jpg', 'jpeg'])
+c1, c2 = st.columns([4, 1])
+with c1:
+    st.markdown('<h1 class="patent-title">SYSTEM AND METHOD FOR NON-INVASIVE ALZHEIMER\'S DISEASE ASSESSMENT USING NON-MYDRIATIC RETINAL FUNDUS IMAGING</h1>', unsafe_allow_html=True)
+with c2:
+    st.markdown("""
+    <div class='glass-metric'>
+        <h5>SYSTEM ACTIVE</h5>
+        <span style="color:#00e676">● LIVE</span><br>
+        <small>Patent Pending</small>
+    </div>
+    """, unsafe_allow_html=True)
+
+upload = st.file_uploader("Upload Retinal Fundus Scan", type=['png', 'jpg', 'jpeg'])
 
 if upload:
     img, data = process_img(upload)
 
     preds, speed = {}, {}
-    with st.spinner("Analyzing Retinal Biomarkers..."):
+    with st.spinner("Processing Micro-Vasculature Features..."):
         for name, model in models.items():
             t0 = time.time()
             try:
@@ -288,43 +299,43 @@ if upload:
 
     col_main_1, col_main_2 = st.columns([1, 2])
     with col_main_1:
-        st.image(img, caption="Processed Input Scan", use_column_width=True)
+        st.image(img, caption="Processed Retinal Input", use_column_width=True)
         st.markdown(f"<div class='glass-metric'><h2 style='color:{color}'>{status}</h2>{final_score:.2%} Probability</div>", unsafe_allow_html=True)
 
     with col_main_2:
         fig = go.Figure(go.Indicator(
             mode="gauge+number", value=final_score*100,
-            title={'text': "Alzheimer's Probability Score"},
+            title={'text': "Diagnostic Probability Assessment"},
             gauge={'axis': {'range': [0, 100]}, 'bar': {'color': color}, 'bgcolor': "rgba(0,0,0,0)"}
         ))
-        st.plotly_chart(style_chart(fig, "Consensus Risk Meter"), use_column_width=True)
+        st.plotly_chart(style_chart(fig, "Diagnostic Probability Assessment"), use_column_width=True)
 
     st.divider()
-    st.subheader("🧠 Deep Diagnostic Analytics")
+    st.subheader("🧠 Advanced Biomarker Analytics")
 
     r1c1, r1c2, r1c3 = st.columns(3)
     with r1c1:
         fig = go.Figure(go.Scatterpolar(r=[preds.get(k,0) for k in preds] + [list(preds.values())[0]], theta=list(preds.keys()) + [list(preds.keys())[0]], fill='toself', line_color='#34d399'))
-        st.plotly_chart(style_chart(fig, "Architecture Consensus"), use_column_width=True)
+        st.plotly_chart(style_chart(fig, "Architecture Consensus Matrix"), use_column_width=True)
     with r1c2:
-        fig = go.Figure(data=[go.Pie(labels=["ViT (Global)", "CNN (Local)"], values=[(vit_p * w_vit), (cnn_p * w_cnn)], hole=.6)])
-        st.plotly_chart(style_chart(fig, "Decision Factors"), use_column_width=True)
+        fig = go.Figure(data=[go.Pie(labels=["ViT (Global Features)", "CNN (Local Features)"], values=[(vit_p * w_vit), (cnn_p * w_cnn)], hole=.6)])
+        st.plotly_chart(style_chart(fig, "Weighted Feature Contribution"), use_column_width=True)
     with r1c3:
         df_conf = pd.DataFrame({"Model": list(preds.keys()), "Confidence": list(preds.values())})
         fig = px.bar(df_conf, x="Confidence", y="Model", orientation='h', color="Confidence", range_x=[0,1], color_continuous_scale="Bluered")
-        st.plotly_chart(style_chart(fig, "Confidence Levels"), use_column_width=True)
+        st.plotly_chart(style_chart(fig, "Model Confidence Levels"), use_column_width=True)
 
     r2c1, r2c2, r2c3 = st.columns(3)
     with r2c1:
         fig = px.scatter(x=list(speed.values()), y=list(preds.values()), size=[30]*4, color=list(preds.keys()), labels={'x':'ms', 'y':'Conf'})
-        st.plotly_chart(style_chart(fig, "Speed vs Accuracy"), use_column_width=True)
+        st.plotly_chart(style_chart(fig, "Latency vs Accuracy Tradeoff"), use_column_width=True)
     with r2c2:
         devs = [p - np.mean(list(preds.values())) for p in preds.values()]
         fig = go.Figure(go.Bar(x=list(preds.keys()), y=devs, marker_color=['#ff4444' if d>0 else '#34d399' for d in devs]))
-        st.plotly_chart(style_chart(fig, "Divergence from Mean"), use_column_width=True)
+        st.plotly_chart(style_chart(fig, "Deviation from Consensus Mean"), use_column_width=True)
     with r2c3:
         fig = go.Figure(data=go.Heatmap(z=[list(preds.values())], x=list(preds.keys()), y=['Risk'], colorscale='Viridis'))
-        st.plotly_chart(style_chart(fig, "Risk Heatmap"), use_column_width=True)
+        st.plotly_chart(style_chart(fig, "Risk Intensity Heatmap"), use_column_width=True)
 
     r3c1, r3c2, r3c3 = st.columns(3)
     with r3c1:
@@ -333,14 +344,14 @@ if upload:
         for i, c in enumerate(['Red', 'Green', 'Blue']):
             h, b = np.histogram(img_arr[:,:,i], bins=64, range=(0, 256))
             fig.add_trace(go.Scatter(x=b[:-1], y=h, name=c, line=dict(color=c.lower())))
-        st.plotly_chart(style_chart(fig, "RGB Spectrum"), use_column_width=True)
+        st.plotly_chart(style_chart(fig, "Retinal Color Spectrum"), use_column_width=True)
     with r3c2:
         fig = go.Figure(data=[go.Scatter3d(x=list(speed.values()), y=list(preds.values()), z=[1, 2, 3, 4], mode='markers', marker=dict(size=10, color=list(preds.values()), colorscale='Viridis'))])
         st.plotly_chart(style_chart(fig, "3D Diagnostic Manifold"), use_column_width=True)
     with r3c3:
         x_d = np.linspace(0, 1, 100); y_d = np.exp(-((x_d - final_score)**2) / 0.05)
         fig = go.Figure(go.Scatter(x=x_d, y=y_d, fill='tozeroy', line_color=color))
-        st.plotly_chart(style_chart(fig, "Certainty Curve"), use_column_width=True)
+        st.plotly_chart(style_chart(fig, "Certainty Distribution Curve"), use_column_width=True)
 
 else:
     st.markdown("<div class='glass-metric' style='margin-top:50px'><h2>Waiting for Retinal Scan...</h2></div>", unsafe_allow_html=True)
