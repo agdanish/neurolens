@@ -1,0 +1,9 @@
+streamlit
+tensorflow
+tf-keras
+transformers==4.42.4
+plotly
+pandas
+numpy
+pillow
+h5py
