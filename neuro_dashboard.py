@@ -165,7 +165,7 @@ particle_js = """
 """
 components.html(particle_js, height=0, width=0)
 
-# --- 7. CSS STYLING ---
+# --- 7. CSS STYLING (MOBILE RESPONSIVE FIX) ---
 st.markdown("""
 <style>
     .stApp { background: transparent !important; }
@@ -193,9 +193,8 @@ st.markdown("""
 
     h1, h2, h3 { text-shadow: 0 0 15px rgba(56, 189, 248, 0.6); color: #ffffff !important; }
 
-    /* Patent Title Styling */
+    /* === RESPONSIVE TITLE LOGIC === */
     .patent-title {
-        font-size: 2.2rem;
         font-weight: bold;
         text-transform: uppercase;
         letter-spacing: 1px;
@@ -203,6 +202,26 @@ st.markdown("""
         -webkit-background-clip: text;
         -webkit-text-fill-color: transparent;
         text-shadow: 0px 0px 20px rgba(0, 255, 255, 0.3);
+    }
+
+    /* Desktop Styles */
+    @media only screen and (min-width: 769px) {
+        .patent-title {
+            font-size: 2.2rem;
+        }
+    }
+
+    /* Mobile Styles (Phone Optimization) */
+    @media only screen and (max-width: 768px) {
+        .patent-title {
+            font-size: 1.2rem !important; /* Normal size for phone */
+            line-height: 1.4;
+            text-align: center;
+        }
+        /* Adjust Glass Card padding on mobile */
+        .glass-metric {
+            padding: 10px;
+        }
     }
 </style>
 """, unsafe_allow_html=True)
@@ -268,7 +287,8 @@ with c2:
     <div class='glass-metric'>
         <h5>SYSTEM ACTIVE</h5>
         <span style="color:#00e676">● LIVE</span><br>
-        <small>Patent Pending</small>
+        <small style="color:#a5f3fc; font-weight:bold;">Patent Published</small><br>
+        <span style="font-size:10px; color:#aaa;">App #: 202541062081</span>
     </div>
     """, unsafe_allow_html=True)
 
