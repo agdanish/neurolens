@@ -173,7 +173,14 @@ st.markdown("""
     [data-testid="stHeader"] { background: rgba(0,0,0,0) !important; }
     [data-testid="stToolbar"] { visibility: hidden; }
 
-    * { font-family: 'Times New Roman', Times, serif !important; color: #e0f2fe; }
+    * { color: #e0f2fe; }
+    /* Exclude Streamlit's icon elements (Material Symbols / emoji) from the serif
+       override below -- those icons are rendered as ligature text in an icon font,
+       and forcing Times New Roman turns the glyph into literal overlapping text
+       (e.g. the upload icon rendering as a stray "upload" next to the button). */
+    *:not([data-testid="stIconMaterial"]):not([data-testid="stIconEmoji"]) {
+        font-family: 'Times New Roman', Times, serif !important;
+    }
 
     .glass-metric {
         background: rgba(15, 23, 42, 0.7);
@@ -292,11 +299,8 @@ with c2:
     </div>
     """, unsafe_allow_html=True)
 
-upload = st.file_uploader("Upload Retinal Fundus Scan", type=['png', 'jpg', 'jpeg'])
-
-if upload:
-    img, data = process_img(upload)
-
+def render_dashboard(img, data):
+    """Runs inference and draws the full results dashboard for one uploaded scan."""
     preds, speed = {}, {}
     with st.spinner("Processing Micro-Vasculature Features..."):
         for name, model in models.items():
@@ -319,7 +323,7 @@ if upload:
 
     col_main_1, col_main_2 = st.columns([1, 2])
     with col_main_1:
-        st.image(img, caption="Processed Retinal Input", use_column_width=True)
+        st.image(img, caption="Processed Retinal Input", width="stretch")
         st.markdown(f"<div class='glass-metric'><h2 style='color:{color}'>{status}</h2>{final_score:.2%} Probability</div>", unsafe_allow_html=True)
 
     with col_main_2:
@@ -328,7 +332,7 @@ if upload:
             title={'text': "Diagnostic Probability Assessment"},
             gauge={'axis': {'range': [0, 100]}, 'bar': {'color': color}, 'bgcolor': "rgba(0,0,0,0)"}
         ))
-        st.plotly_chart(style_chart(fig, "Diagnostic Probability Assessment"), use_column_width=True)
+        st.plotly_chart(style_chart(fig, "Diagnostic Probability Assessment"), width="stretch")
 
     st.divider()
     st.subheader("🧠 Advanced Biomarker Analytics")
@@ -336,26 +340,26 @@ if upload:
     r1c1, r1c2, r1c3 = st.columns(3)
     with r1c1:
         fig = go.Figure(go.Scatterpolar(r=[preds.get(k,0) for k in preds] + [list(preds.values())[0]], theta=list(preds.keys()) + [list(preds.keys())[0]], fill='toself', line_color='#34d399'))
-        st.plotly_chart(style_chart(fig, "Architecture Consensus Matrix"), use_column_width=True)
+        st.plotly_chart(style_chart(fig, "Architecture Consensus Matrix"), width="stretch")
     with r1c2:
         fig = go.Figure(data=[go.Pie(labels=["ViT (Global Features)", "CNN (Local Features)"], values=[(vit_p * w_vit), (cnn_p * w_cnn)], hole=.6)])
-        st.plotly_chart(style_chart(fig, "Weighted Feature Contribution"), use_column_width=True)
+        st.plotly_chart(style_chart(fig, "Weighted Feature Contribution"), width="stretch")
     with r1c3:
         df_conf = pd.DataFrame({"Model": list(preds.keys()), "Confidence": list(preds.values())})
         fig = px.bar(df_conf, x="Confidence", y="Model", orientation='h', color="Confidence", range_x=[0,1], color_continuous_scale="Bluered")
-        st.plotly_chart(style_chart(fig, "Model Confidence Levels"), use_column_width=True)
+        st.plotly_chart(style_chart(fig, "Model Confidence Levels"), width="stretch")
 
     r2c1, r2c2, r2c3 = st.columns(3)
     with r2c1:
         fig = px.scatter(x=list(speed.values()), y=list(preds.values()), size=[30]*4, color=list(preds.keys()), labels={'x':'ms', 'y':'Conf'})
-        st.plotly_chart(style_chart(fig, "Latency vs Accuracy Tradeoff"), use_column_width=True)
+        st.plotly_chart(style_chart(fig, "Latency vs Accuracy Tradeoff"), width="stretch")
     with r2c2:
         devs = [p - np.mean(list(preds.values())) for p in preds.values()]
         fig = go.Figure(go.Bar(x=list(preds.keys()), y=devs, marker_color=['#ff4444' if d>0 else '#34d399' for d in devs]))
-        st.plotly_chart(style_chart(fig, "Deviation from Consensus Mean"), use_column_width=True)
+        st.plotly_chart(style_chart(fig, "Deviation from Consensus Mean"), width="stretch")
     with r2c3:
         fig = go.Figure(data=go.Heatmap(z=[list(preds.values())], x=list(preds.keys()), y=['Risk'], colorscale='Viridis'))
-        st.plotly_chart(style_chart(fig, "Risk Intensity Heatmap"), use_column_width=True)
+        st.plotly_chart(style_chart(fig, "Risk Intensity Heatmap"), width="stretch")
 
     r3c1, r3c2, r3c3 = st.columns(3)
     with r3c1:
@@ -364,14 +368,34 @@ if upload:
         for i, c in enumerate(['Red', 'Green', 'Blue']):
             h, b = np.histogram(img_arr[:,:,i], bins=64, range=(0, 256))
             fig.add_trace(go.Scatter(x=b[:-1], y=h, name=c, line=dict(color=c.lower())))
-        st.plotly_chart(style_chart(fig, "Retinal Color Spectrum"), use_column_width=True)
+        st.plotly_chart(style_chart(fig, "Retinal Color Spectrum"), width="stretch")
     with r3c2:
         fig = go.Figure(data=[go.Scatter3d(x=list(speed.values()), y=list(preds.values()), z=[1, 2, 3, 4], mode='markers', marker=dict(size=10, color=list(preds.values()), colorscale='Viridis'))])
-        st.plotly_chart(style_chart(fig, "3D Diagnostic Manifold"), use_column_width=True)
+        st.plotly_chart(style_chart(fig, "3D Diagnostic Manifold"), width="stretch")
     with r3c3:
         x_d = np.linspace(0, 1, 100); y_d = np.exp(-((x_d - final_score)**2) / 0.05)
         fig = go.Figure(go.Scatter(x=x_d, y=y_d, fill='tozeroy', line_color=color))
-        st.plotly_chart(style_chart(fig, "Certainty Distribution Curve"), use_column_width=True)
+        st.plotly_chart(style_chart(fig, "Certainty Distribution Curve"), width="stretch")
+
+upload = st.file_uploader("Upload Retinal Fundus Scan", type=['png', 'jpg', 'jpeg'])
+
+if upload:
+    try:
+        img, data = process_img(upload)
+    except Exception as e:
+        st.error(f"Could not read the uploaded file as an image ({e}). Please upload a valid PNG or JPG retinal scan.")
+        st.stop()
+
+    if not models:
+        st.error("No diagnostic models are currently loaded. Check the System Control Panel logs in the sidebar.")
+        st.stop()
+
+    try:
+        render_dashboard(img, data)
+    except Exception as e:
+        st.error("An unexpected error occurred while building the diagnostic dashboard. The uploaded scan was processed, but the results could not be rendered.")
+        with st.expander("Technical details"):
+            st.exception(e)
 
 else:
     st.markdown("<div class='glass-metric' style='margin-top:50px'><h2>Waiting for Retinal Scan...</h2></div>", unsafe_allow_html=True)
