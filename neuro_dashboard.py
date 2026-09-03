@@ -200,6 +200,27 @@ st.markdown("""
 
     h1, h2, h3 { text-shadow: 0 0 15px rgba(56, 189, 248, 0.6); color: #ffffff !important; }
 
+    /* === DIAGNOSTIC PROGRESS BAR (SYSTEM READOUT STYLE) === */
+    [data-testid="stProgress"] {
+        margin: 6px 0 18px 0;
+    }
+    [data-testid="stProgress"] p {
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        font-size: 0.85rem;
+        color: #a5f3fc !important;
+        text-shadow: 0 0 8px rgba(0, 242, 255, 0.35);
+    }
+    [data-testid="stProgressBarTrack"] {
+        background-color: rgba(15, 23, 42, 0.75) !important;
+        border: 1px solid rgba(56, 189, 248, 0.25);
+        border-radius: 6px !important;
+    }
+    [data-testid="stProgressBarTrack"] > div {
+        background: linear-gradient(90deg, #0891b2, #00f2ff) !important;
+        box-shadow: 0 0 12px rgba(0, 242, 255, 0.65);
+    }
+
     /* === RESPONSIVE TITLE LOGIC === */
     .patent-title {
         font-weight: bold;
@@ -301,20 +322,36 @@ with c2:
 
 def render_dashboard(img, data):
     """Runs inference and draws the full results dashboard for one uploaded scan."""
+    # Total units of real work this function performs, so the progress bar
+    # reflects actual elapsed processing rather than a guessed animation:
+    # 1 setup step + one inference pass per loaded model + 1 scoring step
+    # + 1 image render + 10 chart renders.
+    total_steps = 1 + len(models) + 1 + 1 + 10
+    progress_step = [0]
+    progress_bar = st.progress(0, text="🔬 INITIALIZING DIAGNOSTIC PIPELINE...")
+
+    def advance(label):
+        progress_step[0] += 1
+        pct = min(100, round((progress_step[0] / total_steps) * 100))
+        progress_bar.progress(pct, text=f"🔬 {label.upper()}... `{pct}%`")
+
+    advance("Calibrating micro-vasculature feature extractors")
+
     preds, speed = {}, {}
-    with st.spinner("Processing Micro-Vasculature Features..."):
-        for name, model in models.items():
-            t0 = time.time()
-            try:
-                raw = model.predict(data, verbose=0)
-                preds[name] = float(raw[0][1] if raw.shape[-1] > 1 else raw[0][0])
-            except: preds[name] = 0.0
-            speed[name] = round((time.time()-t0)*1000, 1)
+    for name, model in models.items():
+        t0 = time.time()
+        try:
+            raw = model.predict(data, verbose=0)
+            preds[name] = float(raw[0][1] if raw.shape[-1] > 1 else raw[0][0])
+        except: preds[name] = 0.0
+        speed[name] = round((time.time()-t0)*1000, 1)
+        advance(f"Running {name} diagnostic inference")
 
     vit_p = preds.get("ViT", 0)
     cnn_p = np.mean([v for k,v in preds.items() if k != "ViT"]) if len(preds)>1 else 0
     final_score = ((vit_p * w_vit) + (cnn_p * w_cnn)) / (w_vit + w_cnn + 1e-9)
     final_score = np.clip(final_score, 0, 1)
+    advance("Computing weighted consensus diagnostic score")
 
     status = "ALZHEIMER'S RISK DETECTED" if final_score > thresh else "LOW RISK / NORMAL"
     color = "#ff4444" if final_score > thresh else "#34d399"
@@ -324,6 +361,7 @@ def render_dashboard(img, data):
     col_main_1, col_main_2 = st.columns([1, 2])
     with col_main_1:
         st.image(img, caption="Processed Retinal Input", width="stretch")
+        advance("Rendering processed retinal input")
         st.markdown(f"<div class='glass-metric'><h2 style='color:{color}'>{status}</h2>{final_score:.2%} Probability</div>", unsafe_allow_html=True)
 
     with col_main_2:
@@ -333,6 +371,7 @@ def render_dashboard(img, data):
             gauge={'axis': {'range': [0, 100]}, 'bar': {'color': color}, 'bgcolor': "rgba(0,0,0,0)"}
         ))
         st.plotly_chart(style_chart(fig, "Diagnostic Probability Assessment"), width="stretch")
+        advance("Rendering diagnostic probability assessment")
 
     st.divider()
     st.subheader("🧠 Advanced Biomarker Analytics")
@@ -341,25 +380,31 @@ def render_dashboard(img, data):
     with r1c1:
         fig = go.Figure(go.Scatterpolar(r=[preds.get(k,0) for k in preds] + [list(preds.values())[0]], theta=list(preds.keys()) + [list(preds.keys())[0]], fill='toself', line_color='#34d399'))
         st.plotly_chart(style_chart(fig, "Architecture Consensus Matrix"), width="stretch")
+        advance("Rendering architecture consensus matrix")
     with r1c2:
         fig = go.Figure(data=[go.Pie(labels=["ViT (Global Features)", "CNN (Local Features)"], values=[(vit_p * w_vit), (cnn_p * w_cnn)], hole=.6)])
         st.plotly_chart(style_chart(fig, "Weighted Feature Contribution"), width="stretch")
+        advance("Rendering weighted feature contribution")
     with r1c3:
         df_conf = pd.DataFrame({"Model": list(preds.keys()), "Confidence": list(preds.values())})
         fig = px.bar(df_conf, x="Confidence", y="Model", orientation='h', color="Confidence", range_x=[0,1], color_continuous_scale="Bluered")
         st.plotly_chart(style_chart(fig, "Model Confidence Levels"), width="stretch")
+        advance("Rendering model confidence levels")
 
     r2c1, r2c2, r2c3 = st.columns(3)
     with r2c1:
         fig = px.scatter(x=list(speed.values()), y=list(preds.values()), size=[30]*4, color=list(preds.keys()), labels={'x':'ms', 'y':'Conf'})
         st.plotly_chart(style_chart(fig, "Latency vs Accuracy Tradeoff"), width="stretch")
+        advance("Rendering latency vs accuracy tradeoff")
     with r2c2:
         devs = [p - np.mean(list(preds.values())) for p in preds.values()]
         fig = go.Figure(go.Bar(x=list(preds.keys()), y=devs, marker_color=['#ff4444' if d>0 else '#34d399' for d in devs]))
         st.plotly_chart(style_chart(fig, "Deviation from Consensus Mean"), width="stretch")
+        advance("Rendering deviation from consensus mean")
     with r2c3:
         fig = go.Figure(data=go.Heatmap(z=[list(preds.values())], x=list(preds.keys()), y=['Risk'], colorscale='Viridis'))
         st.plotly_chart(style_chart(fig, "Risk Intensity Heatmap"), width="stretch")
+        advance("Rendering risk intensity heatmap")
 
     r3c1, r3c2, r3c3 = st.columns(3)
     with r3c1:
@@ -369,13 +414,19 @@ def render_dashboard(img, data):
             h, b = np.histogram(img_arr[:,:,i], bins=64, range=(0, 256))
             fig.add_trace(go.Scatter(x=b[:-1], y=h, name=c, line=dict(color=c.lower())))
         st.plotly_chart(style_chart(fig, "Retinal Color Spectrum"), width="stretch")
+        advance("Rendering retinal color spectrum")
     with r3c2:
         fig = go.Figure(data=[go.Scatter3d(x=list(speed.values()), y=list(preds.values()), z=[1, 2, 3, 4], mode='markers', marker=dict(size=10, color=list(preds.values()), colorscale='Viridis'))])
         st.plotly_chart(style_chart(fig, "3D Diagnostic Manifold"), width="stretch")
+        advance("Rendering 3D diagnostic manifold")
     with r3c3:
         x_d = np.linspace(0, 1, 100); y_d = np.exp(-((x_d - final_score)**2) / 0.05)
         fig = go.Figure(go.Scatter(x=x_d, y=y_d, fill='tozeroy', line_color=color))
         st.plotly_chart(style_chart(fig, "Certainty Distribution Curve"), width="stretch")
+        advance("Rendering certainty distribution curve")
+
+    progress_bar.progress(100, text="✅ DIAGNOSTIC ANALYSIS COMPLETE")
+    progress_bar.empty()
 
 upload = st.file_uploader("Upload Retinal Fundus Scan", type=['png', 'jpg', 'jpeg'])
 
