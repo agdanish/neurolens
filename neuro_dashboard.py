@@ -337,15 +337,30 @@ def render_dashboard(img, data):
 
     advance("Calibrating micro-vasculature feature extractors")
 
-    preds, speed = {}, {}
+    preds, speed, inference_failures = {}, {}, []
     for name, model in models.items():
         t0 = time.time()
         try:
             raw = model.predict(data, verbose=0)
-            preds[name] = float(raw[0][1] if raw.shape[-1] > 1 else raw[0][0])
-        except: preds[name] = 0.0
+            # index 0 is P(Abnormal) for every model: the CNNs are single-sigmoid
+            # binary classifiers trained with Abnormal=1 (raw[0][0] is that sigmoid
+            # output directly). ViT is a 2-unit softmax, but its training pipeline
+            # (FundusViT-B16.ipynb, see the "Reversing class labels to match
+            # expected order" step) swaps the Normal/Abnormal integer labels right
+            # before fitting because flow_from_directory's alphabetical class_indices
+            # put "0_Normal" first -- so ViT's learned output order is also
+            # [P(Abnormal), P(Normal)], not [P(Normal), P(Abnormal)]. Reading
+            # raw[0][1] here would silently score genuine Alzheimer's scans as
+            # low-risk, since it's actually pulling ViT's P(Normal) channel.
+            preds[name] = float(raw[0][0])
+        except Exception:
+            preds[name] = 0.0
+            inference_failures.append(name)
         speed[name] = round((time.time()-t0)*1000, 1)
         advance(f"Running {name} diagnostic inference")
+
+    if inference_failures:
+        st.warning(f"⚠️ {', '.join(inference_failures)} failed during inference and defaulted to 0.0 rather than a real score. Treat this diagnosis with caution.")
 
     vit_p = preds.get("ViT", 0)
     cnn_p = np.mean([v for k,v in preds.items() if k != "ViT"]) if len(preds)>1 else 0
