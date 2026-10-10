@@ -9,6 +9,7 @@ from plotly.subplots import make_subplots
 from PIL import Image
 import os
 import time
+import h5py
 import streamlit.components.v1 as components
 
 # --- 1. DIRECT IMPORT BYPASS ---
@@ -79,6 +80,33 @@ def load_model_weights_safely(model, path, name):
     except:
         try: model.load_weights(path, by_name=True, skip_mismatch=True); return True, "Flexible"
         except Exception as e: return False, str(e)
+
+def count_checkpoint_params(path):
+    """Sums the parameter counts actually stored in a Keras .h5 weights file
+    (excluding optimizer state). Used to sanity-check that a 'successful'
+    load actually restored the model, not just a small surviving subset of
+    it -- a Strict load always matches 100%, but a Flexible (by_name,
+    skip_mismatch) load can silently report success while leaving most of
+    the model at its initialization values if large sub-layers (e.g. a
+    wrapped transformer backbone) never made it into the checkpoint at all.
+    Returns None if the file's internal structure isn't recognized, so
+    callers can skip the check rather than report a false alarm."""
+    try:
+        total = 0
+        with h5py.File(path, "r") as f:
+            if "layers" not in f:
+                return None
+            def add(_name, obj):
+                nonlocal total
+                if isinstance(obj, h5py.Dataset):
+                    n = 1
+                    for d in obj.shape:
+                        n *= d
+                    total += n
+            f["layers"].visititems(add)
+        return total
+    except Exception:
+        return None
 
 # --- 5. PATENT UI CONFIGURATION ---
 st.set_page_config(page_title="Alzheimer's Assessment System", page_icon="🧠", layout="wide")
@@ -275,19 +303,37 @@ MODELS_CONFIG = {
     "ViT": {"path": os.path.join(BASE_DIR, "4-FundusViT-B16-VisionTransformer", "FundusViT-B16.weights.h5"), "builder": build_vit}
 }
 
+# Below this fraction of a model's live parameter count actually found in its
+# checkpoint file, a "successful" (Strict or Flexible) load is flagged as
+# suspect rather than trusted silently -- see count_checkpoint_params above.
+MIN_CHECKPOINT_COVERAGE = 0.5
+
 @st.cache_resource
 def init_inference_engine():
-    loaded, logs = {}, []
+    loaded, logs, incomplete = {}, [], []
     for name, config in MODELS_CONFIG.items():
         if os.path.exists(config["path"]):
             try:
                 model = config["builder"]()
                 s, m = load_model_weights_safely(model, config["path"], name)
-                if s: loaded[name] = model; logs.append(f"🟢 {name}: Online")
+                if s:
+                    loaded[name] = model
+                    note = ""
+                    try:
+                        ckpt_params = count_checkpoint_params(config["path"])
+                        live_params = model.count_params()
+                        if ckpt_params is not None and live_params > 0:
+                            coverage = ckpt_params / live_params
+                            if coverage < MIN_CHECKPOINT_COVERAGE:
+                                incomplete.append((name, coverage))
+                                note = f" ⚠️ only {coverage:.0%} of parameters in checkpoint"
+                    except Exception:
+                        pass
+                    logs.append(f"🟢 {name}: Online{note}")
                 else: logs.append(f"🔴 {name}: Failed")
             except: logs.append(f"🔴 {name}: Error")
         else: logs.append(f"⚪ {name}: Missing")
-    return loaded, logs
+    return loaded, logs, incomplete
 
 def process_img(img_file):
     img = Image.open(img_file).convert("RGB")
@@ -296,7 +342,7 @@ def process_img(img_file):
 # --- 9. MAIN LOGIC ---
 with st.sidebar:
     st.markdown("### 🔬 SYSTEM CONTROL PANEL")
-    models, logs = init_inference_engine()
+    models, logs, incomplete_models = init_inference_engine()
     for log in logs: st.markdown(f"<small>{log}</small>", unsafe_allow_html=True)
     st.divider()
     w_vit = st.slider("ViT Weight Factor", 0.0, 3.0, 1.2)
@@ -319,6 +365,15 @@ with c2:
         <span style="font-size:10px; color:#aaa;">App #: 202541062081</span>
     </div>
     """, unsafe_allow_html=True)
+
+if incomplete_models:
+    detail = ", ".join(f"{name} ({coverage:.0%} of parameters)" for name, coverage in incomplete_models)
+    st.warning(
+        f"⚠️ **Incomplete weight checkpoint detected:** {detail}. These models reported a "
+        "successful load, but most of their parameters never matched the saved weights file "
+        "and are sitting at untrained initialization values — their predictions should be "
+        "treated as unreliable until the checkpoint is re-exported and re-verified."
+    )
 
 def render_dashboard(img, data):
     """Runs inference and draws the full results dashboard for one uploaded scan."""
