@@ -382,7 +382,6 @@ def render_dashboard(img, data):
     with col_main_2:
         fig = go.Figure(go.Indicator(
             mode="gauge+number", value=final_score*100,
-            title={'text': "Diagnostic Probability Assessment"},
             gauge={'axis': {'range': [0, 100]}, 'bar': {'color': color}, 'bgcolor': "rgba(0,0,0,0)"}
         ))
         st.plotly_chart(style_chart(fig, "Diagnostic Probability Assessment"), width="stretch")
