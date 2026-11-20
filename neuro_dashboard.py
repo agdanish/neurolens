@@ -20,6 +20,22 @@ except ImportError as e:
     st.error(f"Critical Library Error: {e}")
     st.stop()
 
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# The ViT classification head is trained on top of a *fine-tuned* ViT-B/16
+# backbone, but FundusViT-B16.weights.h5 only contains the head. A complete
+# export of the backbone (HuggingFace `save_pretrained` output: config.json +
+# tf_model.h5, see export_vit_backbone.py) dropped in this folder is used
+# instead of the generic ImageNet checkpoint from the Hub.
+VIT_BACKBONE_DIR = os.path.join(BASE_DIR, "4-FundusViT-B16-VisionTransformer", "vit_backbone")
+VIT_HUB_ID = "google/vit-base-patch16-224"
+
+def vit_backbone_source():
+    """Returns (source, is_finetuned): the local fine-tuned export if present, else the Hub model."""
+    if os.path.isfile(os.path.join(VIT_BACKBONE_DIR, "tf_model.h5")) and os.path.isfile(os.path.join(VIT_BACKBONE_DIR, "config.json")):
+        return VIT_BACKBONE_DIR, True
+    return VIT_HUB_ID, False
+
 # --- 2. Custom Layers ---
 class TensorTranspose(legacy_keras.layers.Layer):
     def call(self, x): return tf.transpose(x, perm=[0, 3, 1, 2])
@@ -29,10 +45,13 @@ class VisionTransformerFeatureExtractor(legacy_keras.layers.Layer):
     def __init__(self, trainable=True, **kwargs):
         super().__init__(**kwargs)
         self.trainable_arg = trainable
+        source, self.finetuned_backbone = vit_backbone_source()
         try:
-            config = ViTConfig.from_pretrained('google/vit-base-patch16-224', image_size=224, num_channels=3)
-            self.vit = TFViTModel.from_pretrained('google/vit-base-patch16-224', config=config)
-        except Exception: self.vit = None
+            config = ViTConfig.from_pretrained(source, image_size=224, num_channels=3)
+            self.vit = TFViTModel.from_pretrained(source, config=config)
+        except Exception:
+            self.vit = None
+            self.finetuned_backbone = False
         if self.vit: self.vit.trainable = trainable
         self.transpose = TensorTranspose()
 
@@ -295,7 +314,6 @@ def style_chart(fig, title):
     return fig
 
 # --- 8. LOADING ENGINE ---
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MODELS_CONFIG = {
     "ResNet50": {"path": os.path.join(BASE_DIR, "1-FundusR50-ResNet50", "FundusR50.h5"), "builder": build_resnet50},
     "InceptionV3": {"path": os.path.join(BASE_DIR, "2-FundusI3-InceptionV3", "FundusI3.h5"), "builder": build_inceptionv3},
@@ -304,12 +322,17 @@ MODELS_CONFIG = {
 }
 
 # Below this fraction of a model's live parameter count actually found in its
-# checkpoint file, a "successful" (Strict or Flexible) load is flagged as
-# suspect rather than trusted silently -- see count_checkpoint_params above.
+# checkpoint file, a "successful" (Strict or Flexible) load is treated as
+# unusable and the model is excluded from scoring -- see count_checkpoint_params above.
 MIN_CHECKPOINT_COVERAGE = 0.5
 
 @st.cache_resource
 def init_inference_engine():
+    """Loads every model whose checkpoint is present. A model whose checkpoint
+    covers too little of it (see MIN_CHECKPOINT_COVERAGE) is NOT returned in
+    `loaded`: most of its parameters would still be at initialization values,
+    so scoring with it would silently corrupt the diagnosis. It is reported in
+    `incomplete` as (name, coverage) instead."""
     loaded, logs, incomplete = {}, [], []
     for name, config in MODELS_CONFIG.items():
         if os.path.exists(config["path"]):
@@ -317,19 +340,23 @@ def init_inference_engine():
                 model = config["builder"]()
                 s, m = load_model_weights_safely(model, config["path"], name)
                 if s:
-                    loaded[name] = model
-                    note = ""
+                    coverage = None
                     try:
                         ckpt_params = count_checkpoint_params(config["path"])
+                        # A complete local backbone export supplies the parameters the .h5 head file lacks.
+                        backbone_params = sum(l.vit.count_params() for l in model.layers
+                                              if getattr(l, "finetuned_backbone", False) and l.vit is not None)
                         live_params = model.count_params()
                         if ckpt_params is not None and live_params > 0:
-                            coverage = ckpt_params / live_params
-                            if coverage < MIN_CHECKPOINT_COVERAGE:
-                                incomplete.append((name, coverage))
-                                note = f" ⚠️ only {coverage:.0%} of parameters in checkpoint"
+                            coverage = (ckpt_params + backbone_params) / live_params
                     except Exception:
                         pass
-                    logs.append(f"🟢 {name}: Online{note}")
+                    if coverage is not None and coverage < MIN_CHECKPOINT_COVERAGE:
+                        incomplete.append((name, coverage))
+                        logs.append(f"🟠 {name}: Excluded (only {coverage:.0%} of weights in checkpoint)")
+                    else:
+                        loaded[name] = model
+                        logs.append(f"🟢 {name}: Online")
                 else: logs.append(f"🔴 {name}: Failed")
             except: logs.append(f"🔴 {name}: Error")
         else: logs.append(f"⚪ {name}: Missing")
@@ -345,7 +372,7 @@ with st.sidebar:
     models, logs, incomplete_models = init_inference_engine()
     for log in logs: st.markdown(f"<small>{log}</small>", unsafe_allow_html=True)
     st.divider()
-    w_vit = st.slider("ViT Weight Factor", 0.0, 3.0, 1.2)
+    w_vit = st.slider("ViT Weight Factor", 0.0, 3.0, 1.2, disabled="ViT" not in models)
     w_cnn = st.slider("CNN Weight Factor", 0.0, 3.0, 0.8)
     thresh = st.slider("Diagnostic Threshold", 0.0, 1.0, 0.5)
 
@@ -367,12 +394,12 @@ with c2:
     """, unsafe_allow_html=True)
 
 if incomplete_models:
-    detail = ", ".join(f"{name} ({coverage:.0%} of parameters)" for name, coverage in incomplete_models)
-    st.warning(
-        f"⚠️ **Incomplete weight checkpoint detected:** {detail}. These models reported a "
-        "successful load, but most of their parameters never matched the saved weights file "
-        "and are sitting at untrained initialization values — their predictions should be "
-        "treated as unreliable until the checkpoint is re-exported and re-verified."
+    detail = ", ".join(f"{name} (checkpoint holds {coverage:.0%} of its parameters)" for name, coverage in incomplete_models)
+    st.info(
+        f"ℹ️ **{detail} — excluded from scoring.** The saved weights file is missing the "
+        "fine-tuned transformer backbone, so this model can't produce a trustworthy score. "
+        f"The diagnosis below is computed from the remaining models ({', '.join(models) or 'none'}) "
+        "until a complete checkpoint is exported."
     )
 
 def render_dashboard(img, data):
@@ -417,9 +444,19 @@ def render_dashboard(img, data):
     if inference_failures:
         st.warning(f"⚠️ {', '.join(inference_failures)} failed during inference and defaulted to 0.0 rather than a real score. Treat this diagnosis with caution.")
 
+    cnn_scores = [v for k, v in preds.items() if k != "ViT"]
     vit_p = preds.get("ViT", 0)
-    cnn_p = np.mean([v for k,v in preds.items() if k != "ViT"]) if len(preds)>1 else 0
-    final_score = ((vit_p * w_vit) + (cnn_p * w_cnn)) / (w_vit + w_cnn + 1e-9)
+    cnn_p = float(np.mean(cnn_scores)) if cnn_scores else 0
+    # Only models that actually ran take part in the weighted consensus; an
+    # absent model family must not count as a 0.0 vote that drags the score down.
+    parts = []
+    if "ViT" in preds: parts.append((vit_p, w_vit))
+    if cnn_scores: parts.append((cnn_p, w_cnn))
+    weight_sum = sum(w for _, w in parts)
+    if weight_sum > 0:
+        final_score = sum(p * w for p, w in parts) / weight_sum
+    else:
+        final_score = float(np.mean(list(preds.values()))) if preds else 0.0
     final_score = np.clip(final_score, 0, 1)
     advance("Computing weighted consensus diagnostic score")
 
@@ -451,7 +488,9 @@ def render_dashboard(img, data):
         st.plotly_chart(style_chart(fig, "Architecture Consensus Matrix"), width="stretch")
         advance("Rendering architecture consensus matrix")
     with r1c2:
-        fig = go.Figure(data=[go.Pie(labels=["ViT (Global Features)", "CNN (Local Features)"], values=[(vit_p * w_vit), (cnn_p * w_cnn)], hole=.6)])
+        contrib = [(label, p * w) for label, (p, w) in zip(
+            [l for l, present in (("ViT (Global Features)", "ViT" in preds), ("CNN (Local Features)", bool(cnn_scores))) if present], parts)]
+        fig = go.Figure(data=[go.Pie(labels=[l for l, _ in contrib], values=[v for _, v in contrib], hole=.6)])
         st.plotly_chart(style_chart(fig, "Weighted Feature Contribution"), width="stretch")
         advance("Rendering weighted feature contribution")
     with r1c3:
@@ -462,7 +501,7 @@ def render_dashboard(img, data):
 
     r2c1, r2c2, r2c3 = st.columns(3)
     with r2c1:
-        fig = px.scatter(x=list(speed.values()), y=list(preds.values()), size=[30]*4, color=list(preds.keys()), labels={'x':'ms', 'y':'Conf'})
+        fig = px.scatter(x=list(speed.values()), y=list(preds.values()), size=[30]*len(preds), color=list(preds.keys()), labels={'x':'ms', 'y':'Conf'})
         st.plotly_chart(style_chart(fig, "Latency vs Accuracy Tradeoff"), width="stretch")
         advance("Rendering latency vs accuracy tradeoff")
     with r2c2:
@@ -485,7 +524,7 @@ def render_dashboard(img, data):
         st.plotly_chart(style_chart(fig, "Retinal Color Spectrum"), width="stretch")
         advance("Rendering retinal color spectrum")
     with r3c2:
-        fig = go.Figure(data=[go.Scatter3d(x=list(speed.values()), y=list(preds.values()), z=[1, 2, 3, 4], mode='markers', marker=dict(size=10, color=list(preds.values()), colorscale='Viridis'))])
+        fig = go.Figure(data=[go.Scatter3d(x=list(speed.values()), y=list(preds.values()), z=list(range(1, len(preds) + 1)), mode='markers', marker=dict(size=10, color=list(preds.values()), colorscale='Viridis'))])
         st.plotly_chart(style_chart(fig, "3D Diagnostic Manifold"), width="stretch")
         advance("Rendering 3D diagnostic manifold")
     with r3c3:
